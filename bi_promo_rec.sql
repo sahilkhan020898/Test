@@ -1561,6 +1561,103 @@ FROM tops_promo_line_order p
 WHERE p.receipt_id = r.receipt_id
 and p.item_order = r.item_order;
 
+--ADJUSTMENT TYPE: LINE ITEM ORDERING (7_Eleven) 
+
+
+CREATE OR REPLACE TEMPORARY TABLE seven_eleven_promo_line_order1 AS
+(SELECT rec.receipt_id, rec.item_order, rec.rsd, rec.qty*rec.amount AS gross_total, rec.type, rec.qty,
+lead(rec.rsd) over(PARTITION BY rec.receipt_id ORDER BY rec.item_order) AS rsd_row,
+lead(rec.qty*rec.amount) over(PARTITION BY rec.receipt_id ORDER BY rec.item_order) AS gross_total_lead_row,
+lead(rec.type) over(PARTITION BY rec.receipt_id ORDER BY rec.item_order) AS type_row,
+lead(rec.qty) over(PARTITION BY rec.receipt_id ORDER BY rec.item_order) AS qty_row
+ 
+FROM etl_basket_item_qty_promo_rec rec
+LEFT JOIN datamaster.datamaster_banner b ON b.KEY = rec.banner
+  LEFT JOIN etl_basket_store s ON s.receipt_id = rec.receipt_id
+WHERE
+  b.key = '7_eleven' AND
+  s.medium = 'PAPER'
+ORDER BY type, type_row, rsd_row
+); 
+
+----UPDATE PROMO REC TABLE WITH NETTED GROSS TOTALS
+
+UPDATE etl_basket_item_qty_promo_rec r
+--gross_totals
+SET r.gross_total = 
+  CASE 
+    WHEN p.type = 'Item' AND p.type_row = 'Coupon' AND LEFT(p.rsd_row,2) NOT IN ('MC','mc','Mc')
+    AND abs(p.gross_total_lead_row) <= r.gross_total
+    THEN r.gross_total + p.gross_total_lead_row
+    -- WHEN (p.rsd_row ILIKE 'marlb %' or rsd ILIKE '%marlb%') 
+    -- AND LEFT(p.rsd_row,2) NOT IN ('MC','mc','Mc')
+    -- AND p.type = 'Item' AND p.type_row = 'Coupon'
+    -- AND abs(p.gross_total_lead_row) <= r.gross_total
+    -- THEN r.gross_total + p.gross_total_lead_row 
+    WHEN (LEFT(p.rsd_row,3) IN ('PRM','prm','Prm') or p.rsd_row ILIKE '% prm %') 
+    AND p.type = 'Item' AND p.type_row = 'Coupon' AND abs(p.gross_total_lead_row) <= r.gross_total
+    THEN r.gross_total + p.gross_total_lead_row 
+    -- WHEN LEFT(p.rsd_row,6) in ('coupon','Coupon','COUPON')
+    -- AND p.type = 'Item' AND p.type_row = 'Coupon'
+    -- AND abs(p.gross_total_lead_row) <= r.gross_total
+    -- THEN r.gross_total + p.gross_total_lead_row 
+    -- WHEN (LEFT(p.rsd_row,5) in ('PROMO','promo','Promo') OR p.rsd_row ILIKE 'prom %')
+    -- AND p.type = 'Item' AND p.type_row = 'Coupon'
+    -- AND abs(p.gross_total_lead_row) <= r.gross_total
+    -- THEN r.gross_total + p.gross_total_lead_row 
+    ELSE r.gross_total 
+  END,
+--is_promo_adj
+is_promo_adj =  
+  CASE 
+    WHEN p.type = 'Item' AND p.type_row = 'Coupon' AND LEFT(p.rsd_row,2) NOT IN ('MC','mc','Mc')
+    AND abs(p.gross_total_lead_row) <= r.gross_total
+    THEN TRUE
+    -- WHEN (p.rsd_row ILIKE 'marlb %' or rsd ILIKE '%marlb%') 
+    -- AND LEFT(p.rsd_row,2) NOT IN ('MC','mc','Mc')
+    -- AND p.type = 'Item' AND p.type_row = 'Coupon'
+    -- AND abs(p.gross_total_lead_row) <= r.gross_total
+    -- THEN TRUE 
+    WHEN (LEFT(p.rsd_row,3) IN ('PRM','prm','Prm') or p.rsd_row ILIKE '% prm %') 
+    AND p.type = 'Item' AND p.type_row = 'Coupon' AND abs(p.gross_total_lead_row) <= r.gross_total
+    THEN TRUE 
+    -- WHEN LEFT(p.rsd_row,6) in ('coupon','Coupon','COUPON')
+    -- AND p.type = 'Item' AND p.type_row = 'Coupon'
+    -- AND abs(p.gross_total_lead_row) <= r.gross_total
+    -- THEN TRUE
+    -- WHEN (LEFT(p.rsd_row,5) in ('PROMO','promo','Promo') OR p.rsd_row ILIKE 'prom %')
+    -- AND p.type = 'Item' AND p.type_row = 'Coupon'
+    -- AND abs(p.gross_total_lead_row) <= r.gross_total
+    -- THEN TRUE
+    ELSE FALSE 
+  END,
+--promo_adj_type
+  promo_adj_type = 
+  CASE 
+    WHEN p.type = 'Item' AND p.type_row = 'Coupon' AND LEFT(p.rsd_row,2) NOT IN ('MC','mc','Mc')
+    AND abs(p.gross_total_lead_row) <= r.gross_total
+    THEN 'LINE_ITEM_ORDER'
+    -- WHEN (p.rsd_row ILIKE 'marlb %' or rsd ILIKE '%marlb%') 
+    -- AND LEFT(p.rsd_row,2) NOT IN ('MC','mc','Mc')
+    -- AND p.type = 'Item' AND p.type_row = 'Coupon'
+    -- AND abs(p.gross_total_lead_row) <= r.gross_total
+    -- THEN 'LINE_ITEM_ORDER' 
+    WHEN (LEFT(p.rsd_row,3) IN ('PRM','prm','Prm') or p.rsd_row ILIKE '% prm %') 
+    AND p.type = 'Item' AND p.type_row = 'Coupon' AND abs(p.gross_total_lead_row) <= r.gross_total
+    THEN 'LINE_ITEM_ORDER' 
+    -- WHEN LEFT(p.rsd_row,6) in ('coupon','Coupon','COUPON')
+    -- AND p.type = 'Item' AND p.type_row = 'Coupon'
+    -- AND abs(p.gross_total_lead_row) <= r.gross_total
+    -- THEN 'LINE_ITEM_ORDER'
+    -- WHEN (LEFT(p.rsd_row,5) in ('PROMO','promo','Promo') OR p.rsd_row ILIKE 'prom %')
+    -- AND p.type = 'Item' AND p.type_row = 'Coupon'
+    -- AND abs(p.gross_total_lead_row) <= r.gross_total
+    -- THEN 'LINE_ITEM_ORDER'
+    ELSE NULL 
+  END,
+FROM seven_eleven_promo_line_order1 p
+WHERE p.receipt_id = r.receipt_id
+and p.item_order = r.item_order;
 
 
 
